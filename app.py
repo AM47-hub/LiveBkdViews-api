@@ -45,7 +45,7 @@ def process():
 
     for chunk in chunks:
         # Clean the chunk and split into lines
-        lines = chunk.replace('##NEWNOTE###', '').strip().split('\n')
+        lines = chunk.replace('###NEWNOTE###', '').strip().split('\n')
         
         note_text = ""
         anchor_val = ""
