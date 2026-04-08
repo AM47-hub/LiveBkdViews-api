@@ -11,7 +11,7 @@ def phonetic_repair(text):
         r'\bfive\b': '5', r'\bsix\b': '6', r'\bseven\b': '7', r'\beight\b': '8',
         r'\bnine\b': '9', r'\bten\b': '10', r'\btwenty\b': '20', r'\bthirty\b': '30',
         r'\bforty\b': '40', r'\bfifty\b': '50', r'\bto\b': '2', r'\bfor\b': '4',
-        r'\bate\b': '8', r'\bat\b': '8'
+        r'\bate\b': '8', r'\bat\b': '8', r'\btoo\b': '2'
     }
     for pattern, replacement in repairs.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -19,8 +19,9 @@ def phonetic_repair(text):
 
 def format_address(address):
     address = phonetic_repair(address)
-    # CHANGE: Standardizing Unit/Flat/Flap/Suite/Block to UX/Y format
-    unit_pattern = r'\b(flat|unit|u|suite|block|flap)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
+    # CHANGE: Catching "flap/flaps" and "beside" cleanup
+    address = re.sub(r'\bbeside\b', '', address, flags=re.IGNORECASE)
+    unit_pattern = r'\b(flat|unit|u|suite|block|flap|flaps)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
     address = re.sub(unit_pattern, r'U\2/\3', address, flags=re.IGNORECASE)
     address = re.sub(r'\bnumber\s*(\d+[a-z]?)', r'\1', address, flags=re.IGNORECASE)
     
@@ -45,34 +46,25 @@ def format_address(address):
 def calculate_date(text, anchor_str):
     days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
     months_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
-    
     try:
         anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
     except:
         return None
-    
     t_lower = text.lower()
-    
-    # 1. Absolute dates
     date_match = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
     if date_match:
         try:
             m_idx = months_map[date_match.group(2)[:3]]
             return datetime(anchor.year, m_idx, int(date_match.group(1)))
         except: pass
-
-    # 2. Relative dates (this/next)
     day_match = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
     if day_match:
         keyword = day_match.group(1)
         target_idx = days_map[day_match.group(2)[:3]]
         anchor_idx = anchor.weekday()
-        
         days_ahead = (target_idx - anchor_idx) % 7
         if days_ahead == 0: days_ahead = 7
-        
         res_date = anchor + timedelta(days=days_ahead)
-        # CHANGE: Deterministic 'next' jump if within 2 days of anchor
         if keyword == 'next' and days_ahead <= 2:
             res_date += timedelta(days=7)
         return res_date
@@ -82,38 +74,44 @@ def calculate_date(text, anchor_str):
 def process():
     data = request.get_json(force=True)
     raw_payload = data.get('text', '')
-    chunks = raw_payload.split('###NEWNOTE###')
+    # CHANGE: Using a split that handles potential whitespace around delimiters
+    chunks = re.split(r'\s*###NEWNOTE###\s*', raw_payload)
     results = []
     
     for chunk in chunks:
         if not chunk.strip(): continue
+        # CHANGE: Isolate core block before delimiter
         content_block = chunk.split('###ENDNOTE###')[0].strip()
-        lines = content_block.split('\n')
         
-        note_text, anchor_val, status_val = "", "", ""
-        for line in lines:
-            l = line.strip()
-            if 'anchor:' in l.lower(): anchor_val = l.split(':', 1)[1].strip()
-            elif 'status:' in l.lower(): status_val = l.split(':', 1)[1].strip()
-            elif 'content:' in l.lower(): note_text = l.split(':', 1)[1].strip()
-            else: note_text += " " + l
+        # CHANGE: Use regex to find anchor and status anywhere in the text block
+        anchor_search = re.search(r'anchor:\s*([\d-]+)', content_block, re.I)
+        status_search = re.search(r'status:\s*([\d-]+)', content_block, re.I)
+        
+        anchor_val = anchor_search.group(1) if anchor_search else ""
+        status_val = status_search.group(1) if status_search else ""
+        
+        # CHANGE: Clean text by removing the metadata lines
+        note_text = re.sub(r'(anchor|status|content):.*', '', content_block, flags=re.I).strip()
+        # Fallback if content prefix was missing
+        if not note_text: note_text = content_block
 
         if not anchor_val or not status_val: continue
         res_date = calculate_date(note_text, anchor_val)
         if not res_date: continue
 
-        # CHANGE: DayFlag logic (LIVE vs PAST) based on status date
         status_dt = datetime.strptime(status_val, '%Y-%m-%d')
         day_flag = "LIVE"
         if res_date.date() < status_dt.date():
             day_flag = "PAST"
 
-        address_raw = note_text.split("viewing")[0].strip()
+        # CHANGE: Safer address extraction
+        address_parts = re.split(r'\bviewing\b', note_text, flags=re.I)
+        address_raw = address_parts[0].strip()
         address_raw = re.sub(r'^booked,.*?,.*?,', '', address_raw, flags=re.IGNORECASE).strip()
         
         results.append({
             "viewing_date": res_date.strftime('%d/%m/%Y'),
-            "status": day_flag, # This is the DayFlag
+            "status": day_flag,
             "address": format_address(address_raw)
         })
 
