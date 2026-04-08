@@ -39,28 +39,36 @@ def calculate_date(text, anchor_str):
 def process():
     data = request.get_json(force=True)
     raw = data.get('text', '')
-    chunks = raw.split('###NEWNOTE###')
+    
+    # NON-GREEDY pattern to prevent note-merging
+    pattern = re.compile(r'###NEWNOTE###(.*?)###ENDNOTE###', re.DOTALL | re.IGNORECASE)
     results = []
-    for chunk in chunks:
-        if '###ENDNOTE###' not in chunk: continue
-        block = chunk.split('###ENDNOTE###')[0].strip()
+    
+    for match in pattern.finditer(raw):
+        block = match.group(1).strip()
+        
         a_m = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         s_m = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
+        
         if not a_m or not s_m: continue
+        
         anchor_val, status_val = a_m.group(1), s_m.group(1)
         body = re.sub(r'(Anchor|Status|Content):.*', '', block, flags=re.I).strip()
+        
         target_date = calculate_date(body, anchor_val)
         if target_date:
             status_dt = datetime.strptime(status_val, '%Y-%m-%d')
-            # RENAME: Key is now DayFlag to match Shortcut Action 16
-            day_flag_result = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
-            addr = re.split(r'\bviewing\b', body, flags=re.I)[0]
-            addr = re.sub(r'^booked,.*?,.*?,', '', addr, flags=re.I).strip()
+            day_flag_val = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
+            
+            addr_raw = re.split(r'\bviewing\b', body, flags=re.I)[0]
+            addr_raw = re.sub(r'^booked,.*?,.*?,', '', addr_raw, flags=re.I).strip()
+            
             results.append({
                 "viewing_date": target_date.strftime('%d/%m/%Y'),
-                "DayFlag": day_flag_result,
-                "address": format_address(addr)
+                "DayFlag": day_flag_val,
+                "address": format_address(addr_raw)
             })
+
     return jsonify(results)
 
 if __name__ == "__main__":
