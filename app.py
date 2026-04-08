@@ -23,40 +23,43 @@ def calculate_date(text, anchor_str):
         months_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
         anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
         t_lower = text.lower()
+        
+        # Capture "7th of April" or "2nd April"
         abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
         if abs_m:
-            return datetime(anchor.year, months_map[abs_m.group(2)[:3]], int(abs_m.group(1)))
+            m_str = abs_m.group(2)[:3]
+            if m_str in months_map:
+                return datetime(anchor.year, months_map[m_str], int(abs_m.group(1)))
+
+        # Capture "next Thursday" or "Friday"
         rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
         if rel_m:
-            kw, day = rel_m.groups()
-            days_ahead = (days_map[day[:3]] - anchor.weekday()) % 7
+            kw, day_str = rel_m.groups()
+            target_idx = days_map[day_str[:3]]
+            days_ahead = (target_idx - anchor.weekday()) % 7
             if days_ahead == 0: days_ahead = 7
             res = anchor + timedelta(days=days_ahead)
-            if kw == 'next' and days_ahead <= 2: res += timedelta(days=7)
+            if kw == 'next' and days_ahead <= 2:
+                res += timedelta(days=7)
             return res
-    except: return None
+    except:
+        return None
     return None
 
 @app.route('/process', methods=['POST'])
 def process():
     data = request.get_json(force=True)
-    raw = data.get('text', '').replace('\xa0', ' ') # Remove non-breaking spaces
+    raw = data.get('text', '').replace('\xa0', ' ')
     
     pattern = re.compile(r'###NEWNOTE###(.*?)###ENDNOTE###', re.DOTALL | re.IGNORECASE)
     results = []
     
-    matches = list(pattern.finditer(raw))
-    
-    if not matches:
-        return jsonify([{"error": "No notes found. Check delimiters."}])
-
-    for match in matches:
+    for match in pattern.finditer(raw):
         block = match.group(1).strip()
         a_m = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         s_m = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         
         if not a_m or not s_m:
-            results.append({"address": "DEBUG: Missing Anchor/Status labels", "DayFlag": "ERR", "viewing_date": "00/00/0000"})
             continue
         
         anchor_val, status_val = a_m.group(1), s_m.group(1)
@@ -66,15 +69,23 @@ def process():
         if target_date:
             status_dt = datetime.strptime(status_val, '%Y-%m-%d')
             day_flag_val = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
-            addr = re.split(r'\bviewing\b', body, flags=re.I)[0]
-            addr = re.sub(r'^booked,.*?,.*?,', '', addr, flags=re.I).strip()
+            
+            # Refined address extraction
+            addr_raw = re.split(r'\bviewing\b', body, flags=re.I)[0]
+            addr_raw = re.sub(r'^booked,.*?,.*?,', '', addr_raw, flags=re.I).strip()
+            
             results.append({
                 "viewing_date": target_date.strftime('%d/%m/%Y'),
                 "DayFlag": day_flag_val,
-                "address": format_address(addr)
+                "address": format_address(addr_raw)
             })
         else:
-            results.append({"address": "DEBUG: Date Calculation Failed", "DayFlag": "ERR", "viewing_date": "00/00/0000"})
+            # Provide info on failed date for troubleshooting
+            results.append({
+                "viewing_date": "FAIL",
+                "DayFlag": "ERR",
+                "address": f"DATE FAIL: {body[:30]}..."
+            })
 
     return jsonify(results)
 
