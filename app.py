@@ -7,10 +7,11 @@ import os
 app = Flask(__name__)
 
 def format_address(address):
+    # Core phonetic repairs
     rep = {r'\bone\b':'1', r'\btwo\b':'2', r'\bthree\b':'3', r'\bfour\b':'4', r'\bfive\b':'5', r'\bsix\b':'6', r'\bseven\b':'7', r'\beight\b':'8', r'\bnine\b':'9', r'\bto\b':'2', r'\bfor\b':'4'}
     for p, r in rep.items(): address = re.sub(p, r, address, flags=re.I)
     address = re.sub(r'\bbeside\b', '', address, flags=re.I)
-    u_p = r'\b(flat|unit|u|suite|block|flap|flaps)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
+    u_p = r'\b(flat|unit|u|suite|block)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
     address = re.sub(u_p, r'U\2/\3', address, flags=re.I)
     address = re.sub(r'\bnumber\s*(\d+[a-z]?)', r'\1', address, flags=re.I)
     subs = {r'\bcrescent\b':'Cres.', r'\bcresent\b':'Cres.', r'\bway\b':'Wy.', r'\broad\b':'Rd.', r'\bstreet\b':'St.'}
@@ -25,18 +26,15 @@ def calculate_date(text, anchor_str):
         anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
         t_lower = text.lower()
         
-        # Priority: dd/mm/yyyy
         digit_m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', t_lower)
         if digit_m:
             return datetime(int(digit_m.group(3)), int(digit_m.group(2)), int(digit_m.group(1)))
 
-        # Ordinals: 7th of April
         abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
         if abs_m:
             m_str = abs_m.group(2)[:3]
             if m_str in months_map: return datetime(anchor.year, months_map[m_str], int(abs_m.group(1)))
 
-        # Relative: next Thursday
         rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
         if rel_m:
             kw, day = rel_m.groups()
@@ -51,15 +49,15 @@ def calculate_date(text, anchor_str):
 @app.route('/process', methods=['POST'])
 def process():
     data = request.get_json(force=True)
-    raw = data.get('text', '').replace('\xa0', ' ')
+    raw = data.get('text', '').replace('\xa0', ' ').strip()
     
-    # RESTORED: This is the split logic that returned 5 items
-    chunks = raw.split('###NEWNOTE###')
+    # SIMPLE DELIMITER LOGIC: Uses pipe '|'
+    chunks = raw.split('|')
     results = []
     
-    for chunk in chunks:
-        if '###ENDNOTE###' not in chunk: continue
-        block = chunk.split('###ENDNOTE###')[0].strip()
+    for block in chunks:
+        block = block.strip()
+        if not block: continue
         
         a_m = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         s_m = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
