@@ -6,35 +6,22 @@ import os
 app = Flask(__name__)
 
 def format_address(address):
-    # Phonetic repairs for digits and homophones
-    address = re.sub(r'\bone\b', '1', address, flags=re.I)
-    address = re.sub(r'\btwo\b', '2', address, flags=re.I)
-    address = re.sub(r'\bthree\b', '3', address, flags=re.I)
-    address = re.sub(r'\bfour\b', '4', address, flags=re.I)
-    address = re.sub(r'\bfive\b', '5', address, flags=re.I)
-    address = re.sub(r'\bsix\b', '6', address, flags=re.I)
-    address = re.sub(r'\bseven\b', '7', address, flags=re.I)
-    address = re.sub(r'\beight\b', '8', address, flags=re.I)
-    address = re.sub(r'\bnine\b', '9', address, flags=re.I)
-    address = re.sub(r'\bto\b', '2', address, flags=re.I)
-    address = re.sub(r'\bfor\b', '4', address, flags=re.I)
+    # Phonetic repairs
+    rep = {r'\bone\b':'1', r'\btwo\b':'2', r'\bthree\b':'3', r'\bfour\b':'4', r'\bfive\b':'5', r'\bsix\b':'6', r'\bseven\b':'7', r'\beight\b':'8', r'\bnine\b':'9', r'\bto\b':'2', r'\bfor\b':'4'}
+    for p, r in rep.items(): address = re.sub(p, r, address, flags=re.I)
     
-    # Remove "beside" and "suburb"
+    # Address logic
     address = re.sub(r'\bbeside\b', '', address, flags=re.I)
-    address = re.sub(r'\bsuburb\s+', '', address, flags=re.I)
-    
-    # Standardize Unit/Flat/Flap/Suite to UX/Y
-    unit_pattern = r'\b(flat|unit|u|suite|block|flap|flaps)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
-    address = re.sub(unit_pattern, r'U\2/\3', address, flags=re.I)
+    u_p = r'\b(flat|unit|u|suite|block|flap|flaps)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
+    address = re.sub(u_p, r'U\2/\3', address, flags=re.I)
     address = re.sub(r'\bnumber\s*(\d+[a-z]?)', r'\1', address, flags=re.I)
     
-    # Abbreviate street types
-    subs = {r'\bcrescent\b':'Cres.', r'\bcresent\b':'Cres.', r'\bway\b':'Wy.', r'\broad\b':'Rd.', r'\bstreet\b':'St.', r'\bavenue\b':'Ave.'}
+    # Street abbreviations
+    subs = {r'\bcrescent\b':'Cres.', r'\bcresent\b':'Cres.', r'\bway\b':'Wy.', r'\broad\b':'Rd.', r'\bstreet\b':'St.'}
     for p, r in subs.items(): address = re.sub(p, r, address, flags=re.I)
     
-    address = re.sub(r'\s+', ' ', address).strip().title()
-    # Force 'U' prefix to remain uppercase
-    return re.sub(r'\bu(\d+)', r'U\1', address, flags=re.I)
+    address = re.sub(r'\bsuburb\s+', '', address, flags=re.I)
+    return re.sub(r'\s+', ' ', address).strip().title().replace('U', 'U')
 
 def calculate_date(text, anchor_str):
     days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
@@ -43,62 +30,57 @@ def calculate_date(text, anchor_str):
     anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
     t_lower = text.lower()
     
-    # Absolute Date check
-    date_match = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
-    if date_match:
-        try:
-            m_idx = months_map[date_match.group(2)[:3]]
-            return datetime(anchor.year, m_idx, int(date_match.group(1)))
-        except: pass
+    # Absolute Date (e.g., 7th of April)
+    abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
+    if abs_m:
+        return datetime(anchor.year, months_map[abs_m.group(2)[:3]], int(abs_m.group(1)))
 
-    # Relative Date check
-    day_match = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
-    if day_match:
-        keyword, d_str = day_match.groups()
-        target_idx = days_map[d_str[:3]]
-        days_ahead = (target_idx - anchor.weekday()) % 7
+    # Relative Date (e.g., next Thursday)
+    rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
+    if rel_m:
+        kw, day = rel_m.groups()
+        days_ahead = (days_map[day[:3]] - anchor.weekday()) % 7
         if days_ahead == 0: days_ahead = 7
-        
-        res_date = anchor + timedelta(days=days_ahead)
-        if keyword == 'next' and days_ahead <= 2:
-            res_date += timedelta(days=7)
-        return res_date
+        res = anchor + timedelta(days=days_ahead)
+        if kw == 'next' and days_ahead <= 2: res += timedelta(days=7)
+        return res
     return None
 
 @app.route('/process', methods=['POST'])
 def process():
     data = request.get_json(force=True)
-    raw_payload = data.get('text', '')
+    raw = data.get('text', '')
     
-    # Split by delimiter and filter out empty strings
-    chunks = [c for c in raw_payload.split('###NEWNOTE###') if '###ENDNOTE###' in c]
+    # Simple split that worked previously
+    chunks = raw.split('###NEWNOTE###')
     results = []
     
     for chunk in chunks:
+        if '###ENDNOTE###' not in chunk: continue
         block = chunk.split('###ENDNOTE###')[0].strip()
         
-        # Regex extraction for ISO 8601 dates
-        a_match = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
-        s_match = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
+        # Metadata extraction
+        a_m = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
+        s_m = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         
-        if not a_match or not s_match:
-            continue
-            
-        anchor_val, status_val = a_match.group(1), s_match.group(1)
+        if not a_m or not s_m: continue
+        
+        anchor_val, status_val = a_m.group(1), s_m.group(1)
         body = re.sub(r'(Anchor|Status|Content):.*', '', block, flags=re.I).strip()
         
         target_date = calculate_date(body, anchor_val)
         if target_date:
             status_dt = datetime.strptime(status_val, '%Y-%m-%d')
-            day_flag = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
+            flag = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
             
-            addr_raw = re.split(r'\bviewing\b', body, flags=re.I)[0]
-            addr_raw = re.sub(r'^booked,.*?,.*?,', '', addr_raw, flags=re.I).strip()
+            # Address extraction
+            addr = re.split(r'\bviewing\b', body, flags=re.I)[0]
+            addr = re.sub(r'^booked,.*?,.*?,', '', addr, flags=re.I).strip()
             
             results.append({
                 "viewing_date": target_date.strftime('%d/%m/%Y'),
-                "status": day_flag,
-                "address": format_address(addr_raw)
+                "status": flag,
+                "address": format_address(addr)
             })
 
     return jsonify(results)
