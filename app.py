@@ -23,7 +23,7 @@ def extract_viewing_date(body, anchor_date):
     if not match: return None
     v_str = match.group(1).lower()
     
-    # Specific date (e.g., 7/4/2026)
+    # Check for direct date (e.g., 7/4/2026)
     d_m = re.search(r'(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?', v_str)
     if d_m:
         day, month = int(d_m.group(1)), int(d_m.group(2))
@@ -31,7 +31,7 @@ def extract_viewing_date(body, anchor_date):
         if year < 100: year += 2000
         return datetime(year, month, day)
     
-    # Relative date logic
+    # Check for relative dates
     days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
     rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', v_str)
     if rel_m:
@@ -49,7 +49,7 @@ def process():
     raw = data.get('text', '').replace('\xa0', ' ').strip()
     chunks = [c for c in raw.split('|') if c.strip()]
     
-    # Collect ALL results in this list
+    # Initialize list outside the loop
     results = []
     
     for block in chunks:
@@ -66,6 +66,7 @@ def process():
         target_dt_obj = extract_viewing_date(body, anchor_dt)
         if target_dt_obj:
             target_dt = target_dt_obj.date()
+            # Flag logic: Compare Target (Viewing) to Status (Today)
             day_flag = "LIVE" if target_dt >= status_dt else "PAST"
             
             pre_viewing = re.split(r'\bviewing\b', body, flags=re.I)[0]
@@ -78,7 +79,7 @@ def process():
                 "address": format_address(addr)
             })
 
-    # FINAL RETURN: Must be outside the loop to create a valid array [...]
+    # Single return outside the loop ensures proper JSON array formatting
     return jsonify(results)
 
 if __name__ == "__main__":
