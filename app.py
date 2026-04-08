@@ -19,12 +19,15 @@ def phonetic_repair(text):
 
 def format_address(address):
     address = phonetic_repair(address)
-    # CHANGE: Catching "flap/flaps" and "beside" cleanup
+    # Remove "beside" and "suburb"
     address = re.sub(r'\bbeside\b', '', address, flags=re.IGNORECASE)
+    address = re.sub(r'\bsuburb\s+', '', address, flags=re.IGNORECASE)
+    
+    # Standardize Unit/Flat/Flap/Suite
     unit_pattern = r'\b(flat|unit|u|suite|block|flap|flaps)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
     address = re.sub(unit_pattern, r'U\2/\3', address, flags=re.IGNORECASE)
-    address = re.sub(r'\bnumber\s*(\d+[a-z]?)', r'\1', address, flags=re.IGNORECASE)
     
+    # Abbreviate Street Types
     st_types = {
         r'\bcrescent\b': 'Cres.', r'\bcresent\b': 'Cres.', r'\bway\b': 'Wy.',
         r'\broad\b': 'Rd.', r'\bstreet\b': 'St.', r'\bavenue\b': 'Ave.',
@@ -33,37 +36,32 @@ def format_address(address):
     for pattern, replacement in st_types.items():
         address = re.sub(pattern, replacement, address, flags=re.IGNORECASE)
     
-    address = re.sub(r'\bsuburb\s+', '', address, flags=re.IGNORECASE)
     address = re.sub(r'\s+', ' ', address).strip()
-    
+    # Force Uppercase for Unit parts, Capitalize others
     words = address.split()
-    formatted = []
-    for w in words:
-        if '/' in w or w.upper().startswith('U'): formatted.append(w.upper())
-        else: formatted.append(w.capitalize())
-    return " ".join(formatted)
+    return " ".join([w.upper() if ('/' in w or w.upper().startswith('U')) else w.capitalize() for w in words])
 
 def calculate_date(text, anchor_str):
     days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
     months_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
-    try:
-        anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
-    except:
-        return None
+    
+    anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
     t_lower = text.lower()
+    
+    # Absolute Date (e.g. 7th of April)
     date_match = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
     if date_match:
-        try:
-            m_idx = months_map[date_match.group(2)[:3]]
-            return datetime(anchor.year, m_idx, int(date_match.group(1)))
-        except: pass
+        m_idx = months_map[date_match.group(2)[:3]]
+        return datetime(anchor.year, m_idx, int(date_match.group(1)))
+
+    # Day of Week (e.g. next Thursday)
     day_match = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
     if day_match:
         keyword = day_match.group(1)
         target_idx = days_map[day_match.group(2)[:3]]
-        anchor_idx = anchor.weekday()
-        days_ahead = (target_idx - anchor_idx) % 7
+        days_ahead = (target_idx - anchor.weekday()) % 7
         if days_ahead == 0: days_ahead = 7
+        
         res_date = anchor + timedelta(days=days_ahead)
         if keyword == 'next' and days_ahead <= 2:
             res_date += timedelta(days=7)
@@ -74,49 +72,41 @@ def calculate_date(text, anchor_str):
 def process():
     data = request.get_json(force=True)
     raw_payload = data.get('text', '')
-    # CHANGE: Using a split that handles potential whitespace around delimiters
-    chunks = re.split(r'\s*###NEWNOTE###\s*', raw_payload)
-    results = []
+    chunks = re.split(r'###NEWNOTE###', raw_payload)
+    results = [] # Initialized once
     
     for chunk in chunks:
-        if not chunk.strip(): continue
-        # CHANGE: Isolate core block before delimiter
+        if '###ENDNOTE###' not in chunk: continue
         content_block = chunk.split('###ENDNOTE###')[0].strip()
         
-        # CHANGE: Use regex to find anchor and status anywhere in the text block
-        anchor_search = re.search(r'anchor:\s*([\d-]+)', content_block, re.I)
-        status_search = re.search(r'status:\s*([\d-]+)', content_block, re.I)
+        # Explicit extraction of metadata
+        a_match = re.search(r'Anchor:\s*([\d-]+)', content_block, re.I)
+        s_match = re.search(r'Status:\s*([\d-]+)', content_block, re.I)
         
-        anchor_val = anchor_search.group(1) if anchor_search else ""
-        status_val = status_search.group(1) if status_search else ""
+        if not a_match or not s_match: continue
         
-        # CHANGE: Clean text by removing the metadata lines
-        note_text = re.sub(r'(anchor|status|content):.*', '', content_block, flags=re.I).strip()
-        # Fallback if content prefix was missing
-        if not note_text: note_text = content_block
-
-        if not anchor_val or not status_val: continue
-        res_date = calculate_date(note_text, anchor_val)
-        if not res_date: continue
-
-        status_dt = datetime.strptime(status_val, '%Y-%m-%d')
-        day_flag = "LIVE"
-        if res_date.date() < status_dt.date():
-            day_flag = "PAST"
-
-        # CHANGE: Safer address extraction
-        address_parts = re.split(r'\bviewing\b', note_text, flags=re.I)
-        address_raw = address_parts[0].strip()
-        address_raw = re.sub(r'^booked,.*?,.*?,', '', address_raw, flags=re.IGNORECASE).strip()
+        anchor_val = a_match.group(1)
+        status_val = s_match.group(1)
         
-        results.append({
-            "viewing_date": res_date.strftime('%d/%m/%Y'),
-            "status": day_flag,
-            "address": format_address(address_raw)
-        })
+        # Extract address and date context
+        note_body = re.sub(r'(Anchor|Status|Content):.*', '', content_block, flags=re.I).strip()
+        res_date = calculate_date(note_body, anchor_val)
+        
+        if res_date:
+            status_dt = datetime.strptime(status_val, '%Y-%m-%d')
+            day_flag = "LIVE" if res_date.date() >= status_dt.date() else "PAST"
+            
+            # Clean address
+            addr_raw = re.split(r'\bviewing\b', note_body, flags=re.I)[0].strip()
+            addr_raw = re.sub(r'^booked,.*?,.*?,', '', addr_raw, flags=re.I).strip()
+            
+            results.append({
+                "viewing_date": res_date.strftime('%d/%m/%Y'),
+                "status": day_flag,
+                "address": format_address(addr_raw)
+            })
 
-    return jsonify(results)
+    return jsonify(results) # Returns valid array [...]
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
