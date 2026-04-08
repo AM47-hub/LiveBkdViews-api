@@ -6,36 +6,25 @@ import os
 app = Flask(__name__)
 
 def format_address(address):
-    # Phonetic repairs
     rep = {r'\bone\b':'1', r'\btwo\b':'2', r'\bthree\b':'3', r'\bfour\b':'4', r'\bfive\b':'5', r'\bsix\b':'6', r'\bseven\b':'7', r'\beight\b':'8', r'\bnine\b':'9', r'\bto\b':'2', r'\bfor\b':'4'}
     for p, r in rep.items(): address = re.sub(p, r, address, flags=re.I)
-    
-    # Address logic
     address = re.sub(r'\bbeside\b', '', address, flags=re.I)
     u_p = r'\b(flat|unit|u|suite|block|flap|flaps)\s*(\d+[a-z]?)\s*number\s*(\d+[a-z]?)'
     address = re.sub(u_p, r'U\2/\3', address, flags=re.I)
     address = re.sub(r'\bnumber\s*(\d+[a-z]?)', r'\1', address, flags=re.I)
-    
-    # Street abbreviations
     subs = {r'\bcrescent\b':'Cres.', r'\bcresent\b':'Cres.', r'\bway\b':'Wy.', r'\broad\b':'Rd.', r'\bstreet\b':'St.'}
     for p, r in subs.items(): address = re.sub(p, r, address, flags=re.I)
-    
     address = re.sub(r'\bsuburb\s+', '', address, flags=re.I)
     return re.sub(r'\s+', ' ', address).strip().title().replace('U', 'U')
 
 def calculate_date(text, anchor_str):
     days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
     months_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
-    
     anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
     t_lower = text.lower()
-    
-    # Absolute Date (e.g., 7th of April)
     abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
     if abs_m:
         return datetime(anchor.year, months_map[abs_m.group(2)[:3]], int(abs_m.group(1)))
-
-    # Relative Date (e.g., next Thursday)
     rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
     if rel_m:
         kw, day = rel_m.groups()
@@ -50,39 +39,28 @@ def calculate_date(text, anchor_str):
 def process():
     data = request.get_json(force=True)
     raw = data.get('text', '')
-    
-    # Simple split that worked previously
     chunks = raw.split('###NEWNOTE###')
     results = []
-    
     for chunk in chunks:
         if '###ENDNOTE###' not in chunk: continue
         block = chunk.split('###ENDNOTE###')[0].strip()
-        
-        # Metadata extraction
         a_m = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         s_m = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
-        
         if not a_m or not s_m: continue
-        
         anchor_val, status_val = a_m.group(1), s_m.group(1)
         body = re.sub(r'(Anchor|Status|Content):.*', '', block, flags=re.I).strip()
-        
         target_date = calculate_date(body, anchor_val)
         if target_date:
             status_dt = datetime.strptime(status_val, '%Y-%m-%d')
-            flag = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
-            
-            # Address extraction
+            # RENAME: Key is now DayFlag to match Shortcut Action 16
+            day_flag_result = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
             addr = re.split(r'\bviewing\b', body, flags=re.I)[0]
             addr = re.sub(r'^booked,.*?,.*?,', '', addr, flags=re.I).strip()
-            
             results.append({
                 "viewing_date": target_date.strftime('%d/%m/%Y'),
-                "status": flag,
+                "DayFlag": day_flag_result,
                 "address": format_address(addr)
             })
-
     return jsonify(results)
 
 if __name__ == "__main__":
