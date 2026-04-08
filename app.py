@@ -18,39 +18,46 @@ def format_address(address):
     return re.sub(r'\s+', ' ', address).strip().title().replace('U', 'U')
 
 def calculate_date(text, anchor_str):
-    days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
-    months_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
-    anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
-    t_lower = text.lower()
-    abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
-    if abs_m:
-        return datetime(anchor.year, months_map[abs_m.group(2)[:3]], int(abs_m.group(1)))
-    rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
-    if rel_m:
-        kw, day = rel_m.groups()
-        days_ahead = (days_map[day[:3]] - anchor.weekday()) % 7
-        if days_ahead == 0: days_ahead = 7
-        res = anchor + timedelta(days=days_ahead)
-        if kw == 'next' and days_ahead <= 2: res += timedelta(days=7)
-        return res
+    try:
+        days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
+        months_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
+        anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
+        t_lower = text.lower()
+        abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
+        if abs_m:
+            return datetime(anchor.year, months_map[abs_m.group(2)[:3]], int(abs_m.group(1)))
+        rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
+        if rel_m:
+            kw, day = rel_m.groups()
+            days_ahead = (days_map[day[:3]] - anchor.weekday()) % 7
+            if days_ahead == 0: days_ahead = 7
+            res = anchor + timedelta(days=days_ahead)
+            if kw == 'next' and days_ahead <= 2: res += timedelta(days=7)
+            return res
+    except: return None
     return None
 
 @app.route('/process', methods=['POST'])
 def process():
     data = request.get_json(force=True)
-    raw = data.get('text', '')
+    raw = data.get('text', '').replace('\xa0', ' ') # Remove non-breaking spaces
     
-    # NON-GREEDY pattern to prevent note-merging
     pattern = re.compile(r'###NEWNOTE###(.*?)###ENDNOTE###', re.DOTALL | re.IGNORECASE)
     results = []
     
-    for match in pattern.finditer(raw):
+    matches = list(pattern.finditer(raw))
+    
+    if not matches:
+        return jsonify([{"error": "No notes found. Check delimiters."}])
+
+    for match in matches:
         block = match.group(1).strip()
-        
         a_m = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         s_m = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         
-        if not a_m or not s_m: continue
+        if not a_m or not s_m:
+            results.append({"address": "DEBUG: Missing Anchor/Status labels", "DayFlag": "ERR", "viewing_date": "00/00/0000"})
+            continue
         
         anchor_val, status_val = a_m.group(1), s_m.group(1)
         body = re.sub(r'(Anchor|Status|Content):.*', '', block, flags=re.I).strip()
@@ -59,15 +66,15 @@ def process():
         if target_date:
             status_dt = datetime.strptime(status_val, '%Y-%m-%d')
             day_flag_val = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
-            
-            addr_raw = re.split(r'\bviewing\b', body, flags=re.I)[0]
-            addr_raw = re.sub(r'^booked,.*?,.*?,', '', addr_raw, flags=re.I).strip()
-            
+            addr = re.split(r'\bviewing\b', body, flags=re.I)[0]
+            addr = re.sub(r'^booked,.*?,.*?,', '', addr, flags=re.I).strip()
             results.append({
                 "viewing_date": target_date.strftime('%d/%m/%Y'),
                 "DayFlag": day_flag_val,
-                "address": format_address(addr_raw)
+                "address": format_address(addr)
             })
+        else:
+            results.append({"address": "DEBUG: Date Calculation Failed", "DayFlag": "ERR", "viewing_date": "00/00/0000"})
 
     return jsonify(results)
 
