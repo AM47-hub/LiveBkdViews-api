@@ -7,7 +7,6 @@ import os
 app = Flask(__name__)
 
 def format_address(address):
-    # Core phonetic repairs
     rep = {r'\bone\b':'1', r'\btwo\b':'2', r'\bthree\b':'3', r'\bfour\b':'4', r'\bfive\b':'5', r'\bsix\b':'6', r'\bseven\b':'7', r'\beight\b':'8', r'\bnine\b':'9', r'\bto\b':'2', r'\bfor\b':'4'}
     for p, r in rep.items(): address = re.sub(p, r, address, flags=re.I)
     address = re.sub(r'\bbeside\b', '', address, flags=re.I)
@@ -25,16 +24,13 @@ def calculate_date(text, anchor_str):
         months_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
         anchor = datetime.strptime(anchor_str.strip(), '%Y-%m-%d')
         t_lower = text.lower()
-        
         digit_m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', t_lower)
         if digit_m:
             return datetime(int(digit_m.group(3)), int(digit_m.group(2)), int(digit_m.group(1)))
-
         abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', t_lower)
         if abs_m:
             m_str = abs_m.group(2)[:3]
             if m_str in months_map: return datetime(anchor.year, months_map[m_str], int(abs_m.group(1)))
-
         rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', t_lower)
         if rel_m:
             kw, day = rel_m.groups()
@@ -51,28 +47,37 @@ def process():
     data = request.get_json(force=True)
     raw = data.get('text', '').replace('\xa0', ' ').strip()
     
-    # SIMPLE DELIMITER LOGIC: Uses pipe '|'
-    chunks = raw.split('|')
+    # Split by pipe and filter out empty segments
+    chunks = [c for c in raw.split('|') if c.strip()]
     results = []
     
     for block in chunks:
-        block = block.strip()
-        if not block: continue
-        
+        # \s* makes the space after the colon OPTIONAL to prevent empty JSON
         a_m = re.search(r'Anchor:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         s_m = re.search(r'Status:\s*(\d{4}-\d{2}-\d{2})', block, re.I)
         if not a_m or not s_m: continue
         
         anchor_val, status_val = a_m.group(1), s_m.group(1)
-        body = re.sub(r'(Anchor|Status|Content):.*', '', block, flags=re.I).strip()
+        
+        c_m = re.search(r'Content:\s*(.*)', block, re.I | re.S)
+        if not c_m: continue
+        body = c_m.group(1).strip()
         
         target_date = calculate_date(body, anchor_val)
         if target_date:
             status_dt = datetime.strptime(status_val, '%Y-%m-%d')
             day_flag_val = "LIVE" if target_date.date() >= status_dt.date() else "PAST"
-            addr = re.split(r'\bviewing\b', body, flags=re.I)[0]
-            addr = re.sub(r'^booked,.*?,.*?,', '', addr, flags=re.I).strip()
             
+            # Isolate everything before 'viewing'
+            pre_viewing = re.split(r'\bviewing\b', body, flags=re.I)[0]
+            
+            # Comma split: 0:Booked, 1:Date, 2:Time, 3+:Address
+            parts = [p.strip() for p in pre_viewing.split(',')]
+            if len(parts) >= 4:
+                addr = ", ".join(parts[3:])
+            else:
+                addr = re.sub(r'^booked,?', '', pre_viewing, flags=re.I).strip()
+
             results.append({
                 "viewing_date": target_date.strftime('%d/%m/%Y'),
                 "DayFlag": day_flag_val,
