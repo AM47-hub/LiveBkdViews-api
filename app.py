@@ -19,42 +19,28 @@ def format_address(address):
     return re.sub(r'\s+', ' ', address).strip().title().replace('U', 'U')
 
 def extract_viewing_date(body, anchor_date):
-    """
-    Specifically targets the text after 'viewing' to identify the Target Date.
-    """
     match = re.search(r'\bviewing\s+(.*)', body, re.I)
     if not match: return None
     v_str = match.group(1).lower()
     
-    # 1. Look for specific date format (e.g., 7/4/2026 or 7/4)
+    # Specific date (e.g., 7/4/2026)
     d_m = re.search(r'(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?', v_str)
     if d_m:
-        day = int(d_m.group(1))
-        month = int(d_m.group(2))
+        day, month = int(d_m.group(1)), int(d_m.group(2))
         year = int(d_m.group(3)) if d_m.group(3) else anchor_date.year
         if year < 100: year += 2000
         return datetime(year, month, day)
     
-    # 2. Look for absolute date (e.g., 7th of April)
-    abs_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*(?:of\s*)?([a-z]{3,})', v_str)
-    if abs_m:
-        months = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
-        m_str = abs_m.group(2)[:3]
-        if m_str in months:
-            return datetime(anchor_date.year, months[m_str], int(abs_m.group(1)))
-
-    # 3. Handle relative date logic (e.g., next Thursday)
+    # Relative date logic
     days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
     rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', v_str)
     if rel_m:
         kw, day = rel_m.groups()
-        target_weekday = days_map[day[:3]]
-        days_ahead = (target_weekday - anchor_date.weekday()) % 7
+        days_ahead = (days_map[day[:3]] - anchor_date.weekday()) % 7
         if days_ahead == 0: days_ahead = 7
         res = anchor_date + timedelta(days=days_ahead)
         if kw == 'next' and days_ahead <= 2: res += timedelta(days=7)
         return datetime.combine(res, datetime.min.time())
-        
     return None
 
 @app.route('/process', methods=['POST'])
@@ -62,6 +48,8 @@ def process():
     data = request.get_json(force=True)
     raw = data.get('text', '').replace('\xa0', ' ').strip()
     chunks = [c for c in raw.split('|') if c.strip()]
+    
+    # Collect ALL results in this list
     results = []
     
     for block in chunks:
@@ -75,16 +63,11 @@ def process():
         status_dt = datetime.strptime(s_m.group(1), '%Y-%m-%d').date()
         body = c_m.group(1).strip()
         
-        # Determine the Target Date (Viewing Date) strictly from the post-viewing text
         target_dt_obj = extract_viewing_date(body, anchor_dt)
-        
         if target_dt_obj:
             target_dt = target_dt_obj.date()
-            
-            # DayFlag comparison: Target vs Status
             day_flag = "LIVE" if target_dt >= status_dt else "PAST"
             
-            # Address extraction logic
             pre_viewing = re.split(r'\bviewing\b', body, flags=re.I)[0]
             parts = [p.strip() for p in pre_viewing.split(',')]
             addr = ", ".join(parts[3:]) if len(parts) >= 4 else pre_viewing
@@ -95,6 +78,7 @@ def process():
                 "address": format_address(addr)
             })
 
+    # FINAL RETURN: Must be outside the loop to create a valid array [...]
     return jsonify(results)
 
 if __name__ == "__main__":
