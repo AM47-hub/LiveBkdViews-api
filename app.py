@@ -97,8 +97,9 @@ def process():
             raw_addr = ", ".join(parts[3:]) if len(parts) >= 4 else pre_viewing
             
             final_results.append({
-                "viewing_date": target_dt.strftime('%d/%m/%Y'),
-                "DayFlag": day_flag,
+                "sortDate": target_dt.strftime('%Y/%m/%d'),
+                "dayFlag": day_flag,
+                "viewDate": target_dt.strftime('%d/%m/%Y'),
                 "address": format_address(raw_addr)
             })
 
