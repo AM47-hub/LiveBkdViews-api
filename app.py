@@ -48,7 +48,13 @@ def extract_viewing_date(body, anchor_date):
         if m_prefix in months:
             return datetime(anchor_date.year, months[m_prefix], int(abs_m.group(1)))
     
-    # 3. Relative: "next Thursday" or "Friday"
+    # 3. Relative: today, tomorrow, "next Thursday" or "Friday"
+    if any(word in v_str for word in ["today", "this morning", "this afternoon"]):
+        return datetime.combine(anchor_date, datetime.min.time())
+    
+    if "tomorrow" in v_str:
+        return datetime.combine(anchor_date + timedelta(days=1), datetime.min.time())
+
     days_map = {"mon":0, "tue":1, "wed":2, "thu":3, "fri":4, "sat":5, "sun":6}
     rel_m = re.search(r'(this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)', v_str)
     if rel_m:
