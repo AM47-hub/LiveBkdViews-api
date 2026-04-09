@@ -18,7 +18,7 @@ def format_address(address):
     address = re.sub(u_p, r'U\2/\3', address, flags=re.I)
     address = re.sub(r'\bnumber\s*(\d+[a-z]?)', r'\1', address, flags=re.I)
     
-    subs = {r'\bcrescent\b':'Cres.', r'\bcresent\b':'Cres.', r'\bway\b':'Wy.', r'\broad\b':'Rd.', r'\bstreet\b':'St.'}
+    subs = {r'\broad\b':'Rd.', r'\bstreet\b':'St.', r'\bcresent\b':'Cres.', r'\bclose\b':'Cl.', r'\bavenue\b':'Ave.', r'\blane\b':'Ln.', r'\bhighway\b':'Hwy.', r'\bway\b':'Wy.', r'\brow\b':'Rw.'}
     for p, r in subs.items(): address = re.sub(p, r, address, flags=re.I)
     
     address = re.sub(r'\bsuburb\s+', '', address, flags=re.I)
