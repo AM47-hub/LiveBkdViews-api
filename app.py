@@ -6,6 +6,11 @@ import os
 
 app = Flask(__name__)
 
+@app.route('/ping', methods=['GET', 'HEAD'])
+def ping():
+    """Lightweight endpoint to wake the server from sleep."""
+    return make_response("Awake", 200)
+
 def format_address(address):
     # Mapping for word-to-digit and common abbreviations
     rep = {r'\bone\b':'1', r'\btwo\b':'2', r'\bthree\b':'3', r'\bfour\b':'4', r'\bfive\b':'5', r'\bsix\b':'6', r'\bseven\b':'7', r'\beight\b':'8', r'\bnine\b':'9', r'\bto\b':'2', r'\bfor\b':'4'}
@@ -114,4 +119,5 @@ def process():
     return make_response(json_output, 200, {"Content-Type": "application/json"})
 
 if __name__ == "__main__":
+    # Port is set dynamically for Render/Deployment
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
