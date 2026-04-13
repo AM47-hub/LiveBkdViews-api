@@ -55,6 +55,10 @@ def format_address(tokens):
         unit = re.sub(p, r, unit, flags=re.I)
         street_num = re.sub(p, r, street_num, flags=re.I)
 
+    # Remove spaces and Uppercase
+    unit = unit.replace(" ", "").upper()
+    street_num = street_num.replace(" ", "").upper()
+    
     # Convert "dash" to "-" in street number
     street_num = re.sub(r'\s+dash\s+', '-', street_num, flags=re.I)
 
@@ -75,7 +79,7 @@ def format_address(tokens):
     full_addr = f"{addr_prefix} {beside} {suburb}"
 
     # 3. Apply abbreviations
-    subs = {r'\broad\b':'Rd.', r'\bstreet\b':'St.', r'\bcresent\b':'Cres.', r'\bplace\b':'Pl.', r'\bclose\b':'Cl.', r'\bavenue\b':'Ave.', r'\blane\b':'Ln.', r'\bhighway\b':'Hwy.', r'\bway\b':'Wy.', r'\brow\b':'Rw.'}
+    subs = {r'\broad\b':'Rd.', r'\bstreet\b':'St.', r'\bcrescent\b':'Cres.', r'\bplace\b':'Pl.', r'\bclose\b':'Cl.', r'\bavenue\b':'Ave.', r'\blane\b':'Ln.', r'\bhighway\b':'Hwy.', r'\bway\b':'Wy.', r'\brow\b':'Rw.'}
     for p, r in subs.items(): full_addr = re.sub(p, r, full_addr, flags=re.I)
 
     return re.sub(r'\s+', ' ', full_addr).strip().title()
